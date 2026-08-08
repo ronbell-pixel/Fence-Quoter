@@ -831,27 +831,43 @@ const storage = getStorage(fbApp);
     });
   }
 
+  // Customer-facing breakdown: folds markup into each line item's price so the
+  // numbers add up cleanly without ever showing markup as its own line. Never
+  // use this data for the on-screen/internal breakdown — only for print & email.
+  function customerFacingBreakdown(quote){
+    var mult = 1 + (Number(quote.markupPct)||0)/100;
+    var items = quote.lineItems.map(function(li){
+      var price = round2((Number(li.price)||0) * mult);
+      return { desc: li.desc, qty: li.qty, unit: li.unit, price: price, total: round2((Number(li.qty)||0) * price) };
+    });
+    var subtotal = items.reduce(function(sum, li){ return sum + li.total; }, 0);
+    var discount = Number(quote.discount)||0;
+    var taxable = Math.max(0, subtotal - discount);
+    var taxAmt = taxable * (Number(quote.taxPct)||0)/100;
+    var grand = taxable + taxAmt;
+    return { items:items, subtotal:subtotal, discount:discount, taxAmt:taxAmt, grand:grand };
+  }
+
   function sendQuoteEmail(quote){
     if(!quote.customer.email){
       alert("Add the customer's email address first (in the Customer card above).");
       return;
     }
     var s = state.settings;
-    var totals = computeTotals(quote);
+    var cb = customerFacingBreakdown(quote);
     var lines = [];
     lines.push("Hi " + (quote.customer.name || "there") + ",");
     lines.push("");
     lines.push("Thanks for the opportunity to quote your fence project. Here's the breakdown:");
     lines.push("");
-    quote.lineItems.forEach(function(li){
-      lines.push("- " + li.desc + " (" + li.qty + " " + (li.unit||"") + " x " + money(li.price) + "): " + money((Number(li.qty)||0)*(Number(li.price)||0)));
+    cb.items.forEach(function(li){
+      lines.push("- " + li.desc + " (" + li.qty + " " + (li.unit||"") + " x " + money(li.price) + "): " + money(li.total));
     });
     lines.push("");
-    lines.push("Subtotal: " + money(totals.subtotal));
-    lines.push("Markup: " + money(totals.markupAmt));
-    if(totals.discount) lines.push("Discount: -" + money(totals.discount));
-    lines.push("Tax: " + money(totals.taxAmt));
-    lines.push("Total: " + money(totals.grand));
+    lines.push("Subtotal: " + money(cb.subtotal));
+    if(cb.discount) lines.push("Discount: -" + money(cb.discount));
+    lines.push("Tax: " + money(cb.taxAmt));
+    lines.push("Total: " + money(cb.grand));
     lines.push("");
     lines.push(s.companyWarranty);
     lines.push("This quote is valid for 30 days from today.");
@@ -871,9 +887,9 @@ const storage = getStorage(fbApp);
 
   function printQuote(quote){
     var s = state.settings;
-    var totals = computeTotals(quote);
-    var rows = quote.lineItems.map(function(li){
-      return '<tr><td>' + escapeHtml(li.desc) + '</td><td style="text-align:center;">' + li.qty + ' ' + escapeHtml(li.unit||"") + '</td><td style="text-align:right;">' + money(li.price) + '</td><td style="text-align:right;">' + money((Number(li.qty)||0)*(Number(li.price)||0)) + '</td></tr>';
+    var cb = customerFacingBreakdown(quote);
+    var rows = cb.items.map(function(li){
+      return '<tr><td>' + escapeHtml(li.desc) + '</td><td style="text-align:center;">' + li.qty + ' ' + escapeHtml(li.unit||"") + '</td><td style="text-align:right;">' + money(li.price) + '</td><td style="text-align:right;">' + money(li.total) + '</td></tr>';
     }).join("");
     var photos = quote.photos.map(function(p){ return '<img src="' + p.url + '" style="width:120px;height:120px;object-fit:cover;border:1px solid #ccc;margin:4px;">'; }).join("");
 
@@ -900,11 +916,10 @@ const storage = getStorage(fbApp);
 
         '<div style="display:flex; justify-content:flex-end; margin-top:16px; font-family:sans-serif;">' +
           '<table style="width:260px; font-size:13px;">' +
-            '<tr><td>Subtotal</td><td style="text-align:right;">' + money(totals.subtotal) + '</td></tr>' +
-            '<tr><td>Markup (' + quote.markupPct + '%)</td><td style="text-align:right;">' + money(totals.markupAmt) + '</td></tr>' +
-            '<tr><td>Discount</td><td style="text-align:right;">-' + money(totals.discount) + '</td></tr>' +
-            '<tr><td>Tax (' + quote.taxPct + '%)</td><td style="text-align:right;">' + money(totals.taxAmt) + '</td></tr>' +
-            '<tr style="border-top:2px solid #c1712f; font-weight:bold; font-size:16px;"><td style="padding-top:8px;">Total</td><td style="text-align:right; padding-top:8px;">' + money(totals.grand) + '</td></tr>' +
+            '<tr><td>Subtotal</td><td style="text-align:right;">' + money(cb.subtotal) + '</td></tr>' +
+            (cb.discount ? '<tr><td>Discount</td><td style="text-align:right;">-' + money(cb.discount) + '</td></tr>' : '') +
+            '<tr><td>Tax (' + quote.taxPct + '%)</td><td style="text-align:right;">' + money(cb.taxAmt) + '</td></tr>' +
+            '<tr style="border-top:2px solid #c1712f; font-weight:bold; font-size:16px;"><td style="padding-top:8px;">Total</td><td style="text-align:right; padding-top:8px;">' + money(cb.grand) + '</td></tr>' +
           '</table>' +
         '</div>' +
 
